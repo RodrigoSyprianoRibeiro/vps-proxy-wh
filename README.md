@@ -2,6 +2,16 @@
 
 Proxy Node.js hospedado em VPS na DigitalOcean (Londres) para acessar o radar da William Hill sem bloqueio geografico.
 
+## Rotas Disponiveis
+
+| Rota | Destino | Descricao |
+|------|---------|-----------|
+| `/health` | - | Health check do servidor |
+| `/stats` | - | Estatisticas de uso |
+| `/wh-api/*` | sports.williamhill.com | Proxy para API/site da William Hill |
+| `/diffusion` | WebSocket | Proxy WebSocket para scores em tempo real |
+| `/*` | sports.whcdn.net | Proxy para CDN (scoreboard/radar) |
+
 ## Informacoes da VPS
 
 | Campo | Valor |
