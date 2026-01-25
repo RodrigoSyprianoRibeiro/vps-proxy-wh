@@ -37,6 +37,119 @@ Configurado no `nginx.conf` via Content-Security-Policy:
 
 Para adicionar novos IPs, editar `nginx.conf` e atualizar a linha `Content-Security-Policy`.
 
+## IPs Bloqueados
+
+IPs bloqueados por abuso (scrapers, proxies nao autorizados, bots). Configurado em `/etc/nginx/sites-available/radarfutebol.xyz`.
+
+| IP | Data Bloqueio | Motivo |
+|----|---------------|--------|
+| `18.171.141.153` | 2026-01-25 | AWS EC2 Londres - Proxy/scraper nao autorizado (46k req/dia) |
+
+### Como bloquear um IP
+
+1. Editar o arquivo de configuracao:
+```bash
+ssh root@209.97.176.182 "nano /etc/nginx/sites-available/radarfutebol.xyz"
+```
+
+2. Adicionar linha `deny IP;` na secao de IPs bloqueados:
+```nginx
+# IPs bloqueados (scrapers/proxies nao autorizados)
+deny 18.171.141.153;
+deny NOVO.IP.AQUI;
+```
+
+3. Testar e recarregar nginx:
+```bash
+ssh root@209.97.176.182 "nginx -t && systemctl reload nginx"
+```
+
+## Verificacao Periodica de Seguranca
+
+**Recomendacao:** Fazer essa verificacao semanalmente ou quando notar lentidao/consumo elevado.
+
+### 1. Verificar IPs com mais conexoes
+
+```bash
+ssh root@209.97.176.182 "ss -tn state established | grep ':443' | awk '{print \$4}' | sed 's/:.*//g' | sort | uniq -c | sort -rn | head -20"
+```
+
+**Como interpretar:**
+- **1-10 conexoes**: Usuario normal (pode ter varias abas/jogos abertos)
+- **10-30 conexoes**: Usuario heavy ou internet instavel (reconexoes) - geralmente OK
+- **30-100 conexoes**: Suspeito - investigar se e datacenter
+- **100+ conexoes**: Muito suspeito - provavelmente proxy/scraper
+
+**Excecoes legitimas:**
+- `186.233.226.101` (SaveInCloud) - pode ter muitas conexoes
+- IPs residenciais brasileiros com 10-30 conexoes - usuarios assistindo varios jogos
+
+**Sinais de alerta:**
+- IPs de datacenters (AWS, Google Cloud, Azure, OVH, Hetzner, DigitalOcean)
+- IP com centenas/milhares de conexoes
+
+### 2. Verificar IPs por volume de requisicoes
+
+```bash
+ssh root@209.97.176.182 "tail -5000 /var/log/nginx/access.log | awk '{print \$1}' | sort | uniq -c | sort -rn | head -20"
+```
+
+**Como interpretar (em 5000 requisicoes do log):**
+- **10-100 req**: Usuario normal assistindo alguns jogos
+- **100-500 req**: Usuario heavy com varios jogos abertos - geralmente OK
+- **500-2000 req**: Suspeito - verificar se e datacenter
+- **2000+ req**: Muito suspeito - provavelmente bot/scraper
+
+**Nota:** Usuarios podem abrir 5-10 jogos simultaneamente, cada um gerando varias requisicoes (JS, CSS, imagens, WebSocket). Isso e normal.
+
+### 3. Verificar referers externos (sites usando o radar sem autorizacao)
+
+```bash
+ssh root@209.97.176.182 "tail -5000 /var/log/nginx/access.log | awk -F'\"' '{print \$4}' | grep -v 'radarfutebol' | grep -v '^-$' | sort | uniq -c | sort -rn"
+```
+
+Se aparecer algum dominio externo, significa que outro site esta embedando o radar.
+
+### 4. Verificar acessos sem referer (possivel scraping)
+
+```bash
+ssh root@209.97.176.182 "tail -5000 /var/log/nginx/access.log | grep 'index.html' | grep '\"-\" \"' | awk '{print \$1}' | sort | uniq -c | sort -rn | head -10"
+```
+
+### 5. Investigar IP suspeito
+
+```bash
+# Substituir IP_SUSPEITO pelo IP a investigar
+IP_SUSPEITO="1.2.3.4"
+
+# Ver total de requisicoes do IP
+ssh root@209.97.176.182 "grep '$IP_SUSPEITO' /var/log/nginx/access.log | wc -l"
+
+# Ver user-agents usados (varios user-agents = bot/proxy)
+ssh root@209.97.176.182 "grep '$IP_SUSPEITO' /var/log/nginx/access.log | awk -F'\"' '{print \$6}' | sort | uniq -c | sort -rn"
+
+# Consultar informacoes do IP
+curl -s "https://ipinfo.io/$IP_SUSPEITO"
+```
+
+**Indicadores de proxy/scraper (verificar TODOS antes de bloquear):**
+- IP pertence a datacenter (AWS, Google, Azure, OVH, Hetzner, DigitalOcean)
+- Muitos user-agents diferentes do mesmo IP (usuarios reais tem 1-2 user-agents)
+- User-agent vazio ou "-" em grande volume
+- Volume absurdo de requisicoes (10.000+ por dia)
+- Requisicoes sem referer em grande quantidade
+
+**NAO bloquear apenas por:**
+- Muitas conexoes (usuario pode ter varios jogos abertos)
+- IP brasileiro/portugues residencial com uso alto (pode ser usuario heavy)
+- Algumas requisicoes sem referer (pode ser acesso direto ocasional)
+
+### 6. Comando rapido de auditoria completa
+
+```bash
+ssh root@209.97.176.182 "echo '=== TOP IPs CONECTADOS ===' && ss -tn state established | grep ':443' | awk '{print \$4}' | sed 's/:.*//g' | sort | uniq -c | sort -rn | head -10 && echo && echo '=== TOP IPs POR REQUISICOES (ultimas 5000) ===' && tail -5000 /var/log/nginx/access.log | awk '{print \$1}' | sort | uniq -c | sort -rn | head -10 && echo && echo '=== REFERERS EXTERNOS ===' && tail -5000 /var/log/nginx/access.log | awk -F'\"' '{print \$4}' | grep -v 'radarfutebol' | grep -v '^-$' | sort | uniq -c | sort -rn | head -5"
+```
+
 ## Arquivos
 
 - `server.js` - Servidor Node.js com proxy e WebSocket
