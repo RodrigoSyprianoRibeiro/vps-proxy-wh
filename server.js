@@ -11,6 +11,9 @@ const TARGET_CDN = "https://sports.whcdn.net";
 const TARGET_API = "https://sports.williamhill.com";
 const WS_HOST = "scoreboards-push.williamhill.com";
 
+// Timeouts
+const PROXY_TIMEOUT = 30000; // 30 segundos
+
 const HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
   "Accept-Language": "en-GB,en;q=0.9",
@@ -79,6 +82,8 @@ app.use("/wh-api", createProxyMiddleware({
   target: TARGET_API,
   changeOrigin: true,
   selfHandleResponse: true,
+  proxyTimeout: PROXY_TIMEOUT,
+  timeout: PROXY_TIMEOUT,
   pathRewrite: {
     "^/wh-api": "", // Remove /wh-api do path
   },
@@ -107,15 +112,30 @@ app.use("/wh-api", createProxyMiddleware({
     const chunks = [];
     proxyRes.on("data", chunk => chunks.push(chunk));
     proxyRes.on("end", () => {
-      let body = Buffer.concat(chunks).toString("utf8");
-      res.status(proxyRes.statusCode);
-      res.setHeader("Content-Length", Buffer.byteLength(body));
-      res.end(body);
+      try {
+        let body = Buffer.concat(chunks).toString("utf8");
+        res.status(proxyRes.statusCode);
+        res.setHeader("Content-Length", Buffer.byteLength(body));
+        res.end(body);
+      } catch (e) {
+        console.error(`[API PARSE ERROR] ${e.message}`);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Parse error", message: e.message });
+        }
+      }
+    });
+    proxyRes.on("error", (e) => {
+      console.error(`[API RESPONSE ERROR] ${e.message}`);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Response error", message: e.message });
+      }
     });
   },
   onError: (err, req, res) => {
     console.error(`[API ERROR] ${err.message}`);
-    res.status(502).json({ error: "Proxy error", message: err.message });
+    if (!res.headersSent) {
+      res.status(502).json({ error: "Proxy error", message: err.message });
+    }
   },
 }));
 
@@ -127,8 +147,11 @@ app.use("/", createProxyMiddleware({
   target: TARGET_CDN,
   changeOrigin: true,
   selfHandleResponse: true,
+  proxyTimeout: PROXY_TIMEOUT,
+  timeout: PROXY_TIMEOUT,
   onProxyReq: (proxyReq, req) => {
     requestStats.cdn++;
+    console.log(`[CDN] ${req.method} ${req.url}`);
     Object.entries(HEADERS).forEach(([k, v]) => proxyReq.setHeader(k, v));
   },
   onProxyRes: (proxyRes, req, res) => {
@@ -150,20 +173,35 @@ app.use("/", createProxyMiddleware({
     const chunks = [];
     proxyRes.on("data", chunk => chunks.push(chunk));
     proxyRes.on("end", () => {
-      let body = Buffer.concat(chunks).toString("utf8");
+      try {
+        let body = Buffer.concat(chunks).toString("utf8");
 
-      if (contentType.includes("html") || contentType.includes("javascript") || contentType.includes("css")) {
-        body = replaceUrls(body, host);
+        if (contentType.includes("html") || contentType.includes("javascript") || contentType.includes("css")) {
+          body = replaceUrls(body, host);
+        }
+
+        res.status(proxyRes.statusCode);
+        res.setHeader("Content-Length", Buffer.byteLength(body));
+        res.end(body);
+      } catch (e) {
+        console.error(`[CDN PARSE ERROR] ${e.message}`);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Parse error", message: e.message });
+        }
       }
-
-      res.status(proxyRes.statusCode);
-      res.setHeader("Content-Length", Buffer.byteLength(body));
-      res.end(body);
+    });
+    proxyRes.on("error", (e) => {
+      console.error(`[CDN RESPONSE ERROR] ${e.message}`);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Response error", message: e.message });
+      }
     });
   },
   onError: (err, req, res) => {
     console.error(`[CDN ERROR] ${err.message}`);
-    res.status(502).json({ error: "Proxy error", message: err.message });
+    if (!res.headersSent) {
+      res.status(502).json({ error: "Proxy error", message: err.message });
+    }
   },
 }));
 
