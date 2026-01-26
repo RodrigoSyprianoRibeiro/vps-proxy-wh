@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - LOG_HTML=false
+      - CAPTCHA_SOLVER=none
+      - TZ=Europe/London
+    ports:
+      - "8191:8191"
+    restart: unless-stopped
+    # Limites de recursos para VPS com 1GB RAM
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
