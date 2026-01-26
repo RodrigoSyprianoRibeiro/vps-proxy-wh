@@ -85,150 +85,124 @@ function getCustomCSS(theme = 'dark') {
    Tema: ${isDark ? 'Escuro' : 'Claro'}
    ======================================== */
 
-/* Remove o fundo original do estádio */
-.background-image,
-[style*="football_background"],
-[style*="background-image"] {
+/* Remove APENAS o fundo do estádio (football_background.jpg) */
+.box_court {
   background-image: none !important;
+  background-color: ${isDark ? '#0a1628' : '#e8f4fc'} !important;
 }
 
-/* Container principal - aplica o tema */
-body,
-.scoreboard,
-.scoreboard-container,
-.main-container,
-#app,
-[class*="scoreboard"] {
-  background: ${isDark
-    ? 'linear-gradient(135deg, #0a1628 0%, #1a2d4a 50%, #0d1f35 100%)'
-    : 'linear-gradient(135deg, #e8f4fc 0%, #d1e9f6 50%, #c5dff0 100%)'} !important;
+/* Cor de fundo do body */
+body {
+  background-color: ${isDark ? '#00143c' : '#d1e9f6'} !important;
 }
 
-/* Logo Radar Futebol como marca d'água */
-body::before {
+/* Container principal */
+#scoreboard {
+  background-color: ${isDark ? '#00143c' : '#e8f4fc'} !important;
+}
+
+/* Logo Radar Futebol como marca d'água no campo */
+.box_court::after {
   content: '';
-  position: fixed;
+  position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 300px;
-  height: 300px;
+  width: 200px;
+  height: 200px;
   background-image: url('https://www.radarfutebol.com/images/logo-white.svg');
   background-repeat: no-repeat;
   background-position: center;
   background-size: contain;
-  opacity: ${isDark ? '0.05' : '0.08'};
+  opacity: ${isDark ? '0.08' : '0.12'};
   pointer-events: none;
   z-index: 0;
 }
 
-/* Garante que o conteúdo fique acima da marca d'água */
-body > * {
+/* Garante que o conteúdo do campo fique visível */
+.box_court > * {
   position: relative;
   z-index: 1;
 }
 
-/* Ajusta cores de texto para o tema */
+/* Área de estatísticas */
+.box_statistics,
+.statisticsWrapper,
+#stats {
+  background-color: ${isDark ? 'rgba(0, 20, 60, 0.95)' : 'rgba(220, 235, 250, 0.95)'} !important;
+}
+
+/* Cabeçalho com times e placar */
+#topContainer,
+header {
+  background-color: ${isDark ? 'rgba(0, 20, 60, 0.9)' : 'rgba(200, 220, 240, 0.9)'} !important;
+}
+
+/* Barra inferior */
+#bottomContainer {
+  background-color: ${isDark ? 'rgba(0, 15, 45, 0.95)' : 'rgba(210, 225, 245, 0.95)'} !important;
+}
+
 ${isDark ? `
-/* TEMA ESCURO */
-.team-name,
-.score,
-.time,
-.period,
-[class*="team"],
-[class*="score"],
-[class*="stat"] {
+/* TEMA ESCURO - Textos */
+.team_name,
+.teamName,
+.topScore,
+.clockWrapper span {
   color: #ffffff !important;
 }
 
-.stat-label,
-.stat-value,
-[class*="label"] {
-  color: #b8c5d6 !important;
+.stat-label span,
+.stat-wrapper span {
+  color: #e0e8f0 !important;
 }
 
-/* Painéis e cards */
-.panel,
-.card,
-.stat-container,
-[class*="panel"],
-[class*="card"] {
-  background: rgba(15, 35, 60, 0.85) !important;
-  border-color: rgba(100, 150, 200, 0.3) !important;
+/* Timeline */
+.timeline {
+  background-color: rgba(0, 30, 70, 0.8) !important;
 }
 
-/* Timeline e barras */
-.timeline,
-.progress-bar,
-[class*="timeline"],
-[class*="progress"] {
-  background: rgba(20, 45, 75, 0.9) !important;
+/* Abas de período */
+#pick_statistics_box li {
+  color: #b0c0d0 !important;
 }
-
-/* Destaques em azul */
-.highlight,
-.active,
-[class*="highlight"],
-[class*="active"] {
-  background: rgba(30, 90, 150, 0.7) !important;
+#pick_statistics_box li.current {
+  color: #ffffff !important;
+  background-color: rgba(30, 80, 140, 0.6) !important;
 }
 ` : `
-/* TEMA CLARO */
-.team-name,
-.score,
-.time,
-.period,
-[class*="team"],
-[class*="score"],
-[class*="stat"] {
+/* TEMA CLARO - Textos */
+.team_name,
+.teamName,
+.topScore,
+.clockWrapper span {
   color: #1a2d4a !important;
 }
 
-.stat-label,
-.stat-value,
-[class*="label"] {
+.stat-label span,
+.stat-wrapper span {
+  color: #2a4060 !important;
+}
+
+/* Timeline */
+.timeline {
+  background-color: rgba(180, 200, 230, 0.8) !important;
+}
+
+/* Abas de período */
+#pick_statistics_box li {
   color: #4a6080 !important;
 }
-
-/* Painéis e cards */
-.panel,
-.card,
-.stat-container,
-[class*="panel"],
-[class*="card"] {
-  background: rgba(255, 255, 255, 0.9) !important;
-  border-color: rgba(100, 150, 200, 0.4) !important;
-  box-shadow: 0 2px 8px rgba(0, 50, 100, 0.1) !important;
+#pick_statistics_box li.current {
+  color: #1a2d4a !important;
+  background-color: rgba(150, 190, 230, 0.6) !important;
 }
 
-/* Timeline e barras */
-.timeline,
-.progress-bar,
-[class*="timeline"],
-[class*="progress"] {
-  background: rgba(200, 220, 240, 0.9) !important;
-}
-
-/* Destaques em azul */
-.highlight,
-.active,
-[class*="highlight"],
-[class*="active"] {
-  background: rgba(100, 160, 220, 0.5) !important;
+/* Ajuste do placar para tema claro */
+.mainScoreBox {
+  background-color: rgba(30, 60, 100, 0.9) !important;
 }
 `}
-
-/* Remove qualquer referência ao background original */
-[style*="football_background.jpg"],
-[style*="background.jpg"],
-[style*="stadium"] {
-  background-image: none !important;
-}
-
-/* Ajustes gerais */
-* {
-  transition: background-color 0.3s ease, color 0.3s ease;
-}
 </style>
 `;
 }
