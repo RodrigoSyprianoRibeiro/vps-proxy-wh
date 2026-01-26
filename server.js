@@ -108,6 +108,135 @@ function replaceUrls(content, host) {
   return result;
 }
 
+// Script injetado no HTML para detectar eventos e notificar janela pai
+const SOUND_NOTIFICATION_SCRIPT = `
+<script>
+(function() {
+  // Armazena estado anterior para detectar mudancas
+  let lastState = {
+    homeGoals: null,
+    awayGoals: null,
+    homeCorners: null,
+    awayCorners: null,
+    homeDanger: null,
+    awayDanger: null,
+    incidents: new Set()
+  };
+
+  // Envia mensagem para janela pai
+  function notifyParent(eventType, data) {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          source: 'williamhill-scoreboard',
+          type: eventType,
+          data: data
+        }, '*');
+      }
+    } catch (e) {}
+  }
+
+  // Detecta eventos no DOM
+  function checkForEvents() {
+    try {
+      // Detecta gols pelo placar
+      const scoreElements = document.querySelectorAll('[class*="score"], [class*="Score"]');
+      scoreElements.forEach(el => {
+        const text = el.textContent.trim();
+        const match = text.match(/^(\\d+)\\s*[-:]\\s*(\\d+)$/);
+        if (match) {
+          const homeGoals = parseInt(match[1]);
+          const awayGoals = parseInt(match[2]);
+          if (lastState.homeGoals !== null && (homeGoals > lastState.homeGoals || awayGoals > lastState.awayGoals)) {
+            notifyParent('goal', { home: homeGoals, away: awayGoals });
+          }
+          lastState.homeGoals = homeGoals;
+          lastState.awayGoals = awayGoals;
+        }
+      });
+
+      // Detecta incidentes na timeline
+      const incidents = document.querySelectorAll('[class*="incident"], [class*="Incident"], [class*="event"], [class*="Event"]');
+      incidents.forEach(el => {
+        const id = el.id || el.textContent.substring(0, 50);
+        if (!lastState.incidents.has(id)) {
+          lastState.incidents.add(id);
+          const classes = el.className.toLowerCase();
+          const text = el.textContent.toLowerCase();
+
+          // Detecta tipo de evento
+          if (classes.includes('goal') || text.includes('goal')) {
+            notifyParent('goal', {});
+          } else if (classes.includes('corner') || text.includes('corner')) {
+            notifyParent('corner', {});
+          } else if (classes.includes('danger') || text.includes('danger')) {
+            notifyParent('dangerattack', {});
+          } else if (classes.includes('penalty') || text.includes('penalty')) {
+            notifyParent('penaltymissed', {});
+          } else if (classes.includes('red') || text.includes('red card')) {
+            notifyParent('redcard', {});
+          }
+        }
+      });
+
+      // Detecta dangerous attacks pelo contador
+      const dangerElements = document.querySelectorAll('[class*="danger"], [class*="Danger"]');
+      dangerElements.forEach(el => {
+        const num = parseInt(el.textContent);
+        if (!isNaN(num) && num > 0) {
+          const isHome = el.closest('[class*="home"], [class*="Home"]');
+          if (isHome && lastState.homeDanger !== null && num > lastState.homeDanger) {
+            notifyParent('dangerattack', { team: 'home' });
+          } else if (!isHome && lastState.awayDanger !== null && num > lastState.awayDanger) {
+            notifyParent('dangerattack', { team: 'away' });
+          }
+          if (isHome) lastState.homeDanger = num;
+          else lastState.awayDanger = num;
+        }
+      });
+
+    } catch (e) {}
+  }
+
+  // Observa mudancas no DOM
+  const observer = new MutationObserver(function(mutations) {
+    checkForEvents();
+  });
+
+  // Inicia observacao quando DOM estiver pronto
+  function init() {
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+    // Verifica periodicamente tambem
+    setInterval(checkForEvents, 2000);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+`;
+
+// Injeta script de notificacao de som no HTML
+function injectSoundScript(content) {
+  // Injeta antes do </body>
+  if (content.includes('</body>')) {
+    return content.replace('</body>', SOUND_NOTIFICATION_SCRIPT + '</body>');
+  }
+  // Ou antes do </html>
+  if (content.includes('</html>')) {
+    return content.replace('</html>', SOUND_NOTIFICATION_SCRIPT + '</html>');
+  }
+  // Ou no final
+  return content + SOUND_NOTIFICATION_SCRIPT;
+}
+
 // ====================================
 // ROTA: /wh-api/* -> sports.williamhill.com
 // Usada pelo crawler para buscar lista de jogos
@@ -231,6 +360,11 @@ app.use("/", createProxyMiddleware({
 
         if (contentType.includes("html") || contentType.includes("javascript") || contentType.includes("css")) {
           body = replaceUrls(body, host);
+        }
+
+        // Injeta script de notificacao de som no HTML do scoreboard
+        if (contentType.includes("html") && req.url.includes("/scoreboards/")) {
+          body = injectSoundScript(body);
         }
 
         res.status(proxyRes.statusCode);
