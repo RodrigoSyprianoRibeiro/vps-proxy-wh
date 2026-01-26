@@ -12,14 +12,47 @@ const TARGET_API = "https://sports.williamhill.com";
 const WS_HOST = "scoreboards-push.williamhill.com";
 
 // Timeouts
-const PROXY_TIMEOUT = 30000; // 30 segundos
+const PROXY_TIMEOUT = 30000;
 
-const HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-  "Accept-Language": "en-GB,en;q=0.9",
-  "Accept-Encoding": "identity",
+// Headers mais completos que simulam um navegador real do UK
+const BROWSER_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+  "Accept-Language": "en-GB,en;q=0.9,en-US;q=0.8",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Cache-Control": "no-cache",
+  "Pragma": "no-cache",
+  "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+  "Sec-Ch-Ua-Mobile": "?0",
+  "Sec-Ch-Ua-Platform": '"Windows"',
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "Upgrade-Insecure-Requests": "1",
   "Referer": "https://sports.williamhill.com/",
   "Origin": "https://sports.williamhill.com",
+};
+
+// Headers para requisições da API (lista de jogos)
+const API_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+  "Accept-Language": "en-GB,en;q=0.9,en-US;q=0.8",
+  "Accept-Encoding": "identity",
+  "Cache-Control": "no-cache",
+  "Pragma": "no-cache",
+  "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+  "Sec-Ch-Ua-Mobile": "?0",
+  "Sec-Ch-Ua-Platform": '"Windows"',
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "same-origin",
+  "Sec-Fetch-User": "?1",
+  "Upgrade-Insecure-Requests": "1",
+  "Referer": "https://sports.williamhill.com/betting/en-gb",
+  "Origin": "https://sports.williamhill.com",
+  "Cookie": "country=GB; language=en-gb; oddsFormat=fractional; OptanonAlertBoxClosed=2024-01-01T00:00:00.000Z",
 };
 
 // Middleware CORS
@@ -55,6 +88,7 @@ const requestStats = {
   cdn: 0,
   api: 0,
   ws: 0,
+  errors: 0,
 };
 
 function isBinary(contentType) {
@@ -84,20 +118,37 @@ app.use("/wh-api", createProxyMiddleware({
   selfHandleResponse: true,
   proxyTimeout: PROXY_TIMEOUT,
   timeout: PROXY_TIMEOUT,
+  followRedirects: true,
   pathRewrite: {
-    "^/wh-api": "", // Remove /wh-api do path
+    "^/wh-api": "",
   },
   onProxyReq: (proxyReq, req) => {
     requestStats.api++;
-    Object.entries(HEADERS).forEach(([k, v]) => proxyReq.setHeader(k, v));
-    console.log(`[API] ${req.method} ${req.url} -> ${TARGET_API}${req.url.replace('/wh-api', '')}`);
+
+    // Remove headers que podem revelar o proxy
+    proxyReq.removeHeader('x-forwarded-for');
+    proxyReq.removeHeader('x-forwarded-host');
+    proxyReq.removeHeader('x-forwarded-proto');
+    proxyReq.removeHeader('x-real-ip');
+    proxyReq.removeHeader('via');
+
+    // Aplica headers do navegador
+    Object.entries(API_HEADERS).forEach(([k, v]) => proxyReq.setHeader(k, v));
+
+    // Host correto
+    proxyReq.setHeader('Host', 'sports.williamhill.com');
+
+    const targetPath = req.url.replace('/wh-api', '') || '/';
+    console.log(`[API] ${req.method} ${targetPath} -> ${TARGET_API}${targetPath}`);
   },
   onProxyRes: (proxyRes, req, res) => {
     const contentType = proxyRes.headers["content-type"] || "";
 
+    console.log(`[API] Response: ${proxyRes.statusCode} - ${contentType.substring(0, 50)}`);
+
     // Copiar headers (exceto os problemáticos)
     Object.keys(proxyRes.headers).forEach(key => {
-      if (!['content-encoding', 'transfer-encoding', 'content-length'].includes(key)) {
+      if (!['content-encoding', 'transfer-encoding', 'content-length', 'content-security-policy'].includes(key)) {
         res.setHeader(key, proxyRes.headers[key]);
       }
     });
@@ -118,6 +169,7 @@ app.use("/wh-api", createProxyMiddleware({
         res.end(body);
       } catch (e) {
         console.error(`[API PARSE ERROR] ${e.message}`);
+        requestStats.errors++;
         if (!res.headersSent) {
           res.status(500).json({ error: "Parse error", message: e.message });
         }
@@ -125,6 +177,7 @@ app.use("/wh-api", createProxyMiddleware({
     });
     proxyRes.on("error", (e) => {
       console.error(`[API RESPONSE ERROR] ${e.message}`);
+      requestStats.errors++;
       if (!res.headersSent) {
         res.status(500).json({ error: "Response error", message: e.message });
       }
@@ -132,6 +185,7 @@ app.use("/wh-api", createProxyMiddleware({
   },
   onError: (err, req, res) => {
     console.error(`[API ERROR] ${err.message}`);
+    requestStats.errors++;
     if (!res.headersSent) {
       res.status(502).json({ error: "Proxy error", message: err.message });
     }
@@ -151,7 +205,7 @@ app.use("/", createProxyMiddleware({
   onProxyReq: (proxyReq, req) => {
     requestStats.cdn++;
     console.log(`[CDN] ${req.method} ${req.url}`);
-    Object.entries(HEADERS).forEach(([k, v]) => proxyReq.setHeader(k, v));
+    Object.entries(BROWSER_HEADERS).forEach(([k, v]) => proxyReq.setHeader(k, v));
   },
   onProxyRes: (proxyRes, req, res) => {
     const contentType = proxyRes.headers["content-type"] || "";
@@ -175,7 +229,6 @@ app.use("/", createProxyMiddleware({
       try {
         let body = Buffer.concat(chunks).toString("utf8");
 
-        // Substitui URLs para apontar para o proxy
         if (contentType.includes("html") || contentType.includes("javascript") || contentType.includes("css")) {
           body = replaceUrls(body, host);
         }
@@ -218,7 +271,7 @@ wss.on("connection", (clientWs, req) => {
   console.log("[WS] Connecting to:", wsUrl);
 
   const targetWs = new WebSocket(wsUrl, {
-    headers: { "User-Agent": HEADERS["User-Agent"], "Origin": "https://sports.whcdn.net" }
+    headers: { "User-Agent": BROWSER_HEADERS["User-Agent"], "Origin": "https://sports.whcdn.net" }
   });
 
   targetWs.on("open", () => console.log("[WS] Connected"));
@@ -233,7 +286,7 @@ wss.on("connection", (clientWs, req) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`
 ╔════════════════════════════════════════════════════╗
-║     VPS Proxy - Radar Futebol                      ║
+║     VPS Proxy - Radar Futebol (Improved)           ║
 ╠════════════════════════════════════════════════════╣
 ║  Port: ${PORT}                                         ║
 ║                                                    ║
