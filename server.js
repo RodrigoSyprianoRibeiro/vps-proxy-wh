@@ -109,9 +109,13 @@ function replaceUrls(content, host) {
 }
 
 // Script injetado no HTML para detectar eventos e notificar janela pai
+// IMPORTANTE: Tem flag de inicializacao para ignorar eventos existentes no carregamento
 const SOUND_NOTIFICATION_SCRIPT = `
 <script>
 (function() {
+  // Flag para ignorar eventos durante inicializacao
+  let isInitialized = false;
+
   // Armazena estado anterior para detectar mudancas
   let lastState = {
     homeGoals: null,
@@ -123,8 +127,11 @@ const SOUND_NOTIFICATION_SCRIPT = `
     incidents: new Set()
   };
 
-  // Envia mensagem para janela pai
+  // Envia mensagem para janela pai (apenas apos inicializacao)
   function notifyParent(eventType, data) {
+    // Ignora notificacoes durante inicializacao
+    if (!isInitialized) return;
+
     try {
       if (window.parent && window.parent !== window) {
         window.parent.postMessage({
@@ -164,7 +171,7 @@ const SOUND_NOTIFICATION_SCRIPT = `
           const classes = el.className.toLowerCase();
           const text = el.textContent.toLowerCase();
 
-          // Detecta tipo de evento
+          // Detecta tipo de evento (notifica apenas se ja inicializado)
           if (classes.includes('goal') || text.includes('goal')) {
             notifyParent('goal', {});
           } else if (classes.includes('corner') || text.includes('corner')) {
@@ -205,13 +212,23 @@ const SOUND_NOTIFICATION_SCRIPT = `
 
   // Inicia observacao quando DOM estiver pronto
   function init() {
+    // Faz primeira varredura para registrar estado inicial (sem notificar)
+    checkForEvents();
+
+    // Inicia observacao
     observer.observe(document.body, {
       childList: true,
       subtree: true,
       characterData: true
     });
+
     // Verifica periodicamente tambem
     setInterval(checkForEvents, 2000);
+
+    // Apos 3 segundos, ativa notificacoes (ignora eventos existentes)
+    setTimeout(function() {
+      isInitialized = true;
+    }, 3000);
   }
 
   if (document.readyState === 'loading') {
