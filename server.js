@@ -74,145 +74,6 @@ function replaceUrls(content, host) {
   return result;
 }
 
-// CSS personalizado para o Radar Futebol
-function getCustomCSS(theme = 'dark') {
-  const isDark = theme === 'dark';
-
-  return `
-<style id="radar-custom-css">
-/* ========================================
-   RADAR FUTEBOL - CSS PERSONALIZADO
-   Tema: ${isDark ? 'Escuro' : 'Claro'}
-   ======================================== */
-
-/* Remove APENAS o fundo do estádio (football_background.jpg) */
-.box_court {
-  background-image: none !important;
-  background-color: ${isDark ? '#0a1628' : '#e8f4fc'} !important;
-}
-
-/* Cor de fundo do body */
-body {
-  background-color: ${isDark ? '#00143c' : '#d1e9f6'} !important;
-}
-
-/* Container principal */
-#scoreboard {
-  background-color: ${isDark ? '#00143c' : '#e8f4fc'} !important;
-}
-
-/* Logo Radar Futebol como marca d'água no campo */
-.box_court::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 200px;
-  height: 200px;
-  background-image: url('https://www.radarfutebol.com/images/logo-white.svg');
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: contain;
-  opacity: ${isDark ? '0.08' : '0.12'};
-  pointer-events: none;
-  z-index: 0;
-}
-
-/* Garante que o conteúdo do campo fique visível */
-.box_court > * {
-  position: relative;
-  z-index: 1;
-}
-
-/* Área de estatísticas */
-.box_statistics,
-.statisticsWrapper,
-#stats {
-  background-color: ${isDark ? 'rgba(0, 20, 60, 0.95)' : 'rgba(220, 235, 250, 0.95)'} !important;
-}
-
-/* Cabeçalho com times e placar */
-#topContainer,
-header {
-  background-color: ${isDark ? 'rgba(0, 20, 60, 0.9)' : 'rgba(200, 220, 240, 0.9)'} !important;
-}
-
-/* Barra inferior */
-#bottomContainer {
-  background-color: ${isDark ? 'rgba(0, 15, 45, 0.95)' : 'rgba(210, 225, 245, 0.95)'} !important;
-}
-
-${isDark ? `
-/* TEMA ESCURO - Textos */
-.team_name,
-.teamName,
-.topScore,
-.clockWrapper span {
-  color: #ffffff !important;
-}
-
-.stat-label span,
-.stat-wrapper span {
-  color: #e0e8f0 !important;
-}
-
-/* Timeline */
-.timeline {
-  background-color: rgba(0, 30, 70, 0.8) !important;
-}
-
-/* Abas de período */
-#pick_statistics_box li {
-  color: #b0c0d0 !important;
-}
-#pick_statistics_box li.current {
-  color: #ffffff !important;
-  background-color: rgba(30, 80, 140, 0.6) !important;
-}
-` : `
-/* TEMA CLARO - Textos */
-.team_name,
-.teamName,
-.topScore,
-.clockWrapper span {
-  color: #1a2d4a !important;
-}
-
-.stat-label span,
-.stat-wrapper span {
-  color: #2a4060 !important;
-}
-
-/* Timeline */
-.timeline {
-  background-color: rgba(180, 200, 230, 0.8) !important;
-}
-
-/* Abas de período */
-#pick_statistics_box li {
-  color: #4a6080 !important;
-}
-#pick_statistics_box li.current {
-  color: #1a2d4a !important;
-  background-color: rgba(150, 190, 230, 0.6) !important;
-}
-
-/* Ajuste do placar para tema claro */
-.mainScoreBox {
-  background-color: rgba(30, 60, 100, 0.9) !important;
-}
-`}
-</style>
-`;
-}
-
-// Extrai o tema da query string
-function getThemeFromUrl(url) {
-  const match = url.match(/[?&]theme=(light|dark)/i);
-  return match ? match[1].toLowerCase() : 'dark';
-}
-
 // ====================================
 // ROTA: /wh-api/* -> sports.williamhill.com
 // Usada pelo crawler para buscar lista de jogos
@@ -229,7 +90,6 @@ app.use("/wh-api", createProxyMiddleware({
   onProxyReq: (proxyReq, req) => {
     requestStats.api++;
     Object.entries(HEADERS).forEach(([k, v]) => proxyReq.setHeader(k, v));
-    // Log para debug
     console.log(`[API] ${req.method} ${req.url} -> ${TARGET_API}${req.url.replace('/wh-api', '')}`);
   },
   onProxyRes: (proxyRes, req, res) => {
@@ -315,25 +175,9 @@ app.use("/", createProxyMiddleware({
       try {
         let body = Buffer.concat(chunks).toString("utf8");
 
+        // Substitui URLs para apontar para o proxy
         if (contentType.includes("html") || contentType.includes("javascript") || contentType.includes("css")) {
           body = replaceUrls(body, host);
-        }
-
-        // Injeta CSS personalizado em páginas HTML
-        if (contentType.includes("html")) {
-          const theme = getThemeFromUrl(req.url);
-          const customCSS = getCustomCSS(theme);
-
-          // Injeta antes do </head> ou no início do <body>
-          if (body.includes("</head>")) {
-            body = body.replace("</head>", customCSS + "</head>");
-          } else if (body.includes("<body")) {
-            body = body.replace(/<body([^>]*)>/, "<body$1>" + customCSS);
-          } else {
-            body = customCSS + body;
-          }
-
-          console.log(`[CDN] Injected custom CSS (theme: ${theme}) for ${req.url}`);
         }
 
         res.status(proxyRes.statusCode);
