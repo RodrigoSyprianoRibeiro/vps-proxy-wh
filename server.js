@@ -11,14 +11,10 @@ const TARGET_CDN = "https://sports.whcdn.net";
 const TARGET_API = "https://sports.williamhill.com";
 const WS_HOST = "scoreboards-push.williamhill.com";
 
-// FlareSolverr
-const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || "http://localhost:8191/v1";
-
 // Timeouts
 const PROXY_TIMEOUT = 30000;
-const FLARESOLVERR_TIMEOUT = 60000;
 
-// Headers para CDN (scoreboard/radar) - sem compressao para facilitar substituicao de URLs
+// Headers para CDN (scoreboard/radar) - sem compressão para facilitar substituição de URLs
 const BROWSER_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -38,7 +34,7 @@ const BROWSER_HEADERS = {
   "Origin": "https://sports.williamhill.com",
 };
 
-// Headers para requisicoes da API (lista de jogos)
+// Headers para requisições da API (lista de jogos)
 const API_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -68,85 +64,32 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware para parse JSON
-app.use(express.json());
-
-// Contador de requisicoes
-const requestStats = {
-  cdn: 0,
-  api: 0,
-  flare: 0,
-  ws: 0,
-  errors: 0,
-};
-
-// Status do FlareSolverr
-let flareSolverrOnline = false;
-let lastFlareCheck = null;
-
-/**
- * Verifica se FlareSolverr esta online
- */
-async function checkFlareSolverr() {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch(FLARESOLVERR_URL.replace('/v1', '/health'), {
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    flareSolverrOnline = response.ok;
-    lastFlareCheck = new Date();
-    return flareSolverrOnline;
-  } catch (error) {
-    flareSolverrOnline = false;
-    lastFlareCheck = new Date();
-    return false;
-  }
-}
-
-// Verificar FlareSolverr na inicializacao
-checkFlareSolverr().then(online => {
-  console.log(`[FlareSolverr] Status inicial: ${online ? 'ONLINE' : 'OFFLINE'}`);
-});
-
-// Verificar periodicamente (a cada 30 segundos)
-setInterval(checkFlareSolverr, 30000);
-
 // Health check endpoint
-app.get("/health", async (req, res) => {
-  // Verificar FlareSolverr se nao verificou recentemente
-  if (!lastFlareCheck || Date.now() - lastFlareCheck.getTime() > 10000) {
-    await checkFlareSolverr();
-  }
-
+app.get("/health", (req, res) => {
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    flaresolverr: {
-      online: flareSolverrOnline,
-      url: FLARESOLVERR_URL,
-      lastCheck: lastFlareCheck,
-    },
   });
 });
 
-// Estatisticas endpoint
+// Estatísticas endpoint
 app.get("/stats", (req, res) => {
   res.json({
     uptime: process.uptime(),
     memory: process.memoryUsage(),
     requests: requestStats,
-    flaresolverr: {
-      online: flareSolverrOnline,
-      lastCheck: lastFlareCheck,
-    },
   });
 });
+
+// Contador de requisições
+const requestStats = {
+  cdn: 0,
+  api: 0,
+  ws: 0,
+  errors: 0,
+};
 
 function isBinary(contentType) {
   if (!contentType) return false;
@@ -166,79 +109,8 @@ function replaceUrls(content, host) {
 }
 
 // ====================================
-// ROTA: /flare/* -> FlareSolverr proxy
-// Usada para bypass de Cloudflare
-// ====================================
-app.all("/flare/*", async (req, res) => {
-  requestStats.flare++;
-
-  // Extrai o path apos /flare/
-  const targetPath = req.url.replace('/flare', '') || '/';
-  const targetUrl = TARGET_API + targetPath;
-
-  console.log(`[FLARE] ${req.method} ${targetPath} -> FlareSolverr -> ${targetUrl}`);
-
-  if (!flareSolverrOnline) {
-    console.error('[FLARE] FlareSolverr offline');
-    requestStats.errors++;
-    return res.status(503).json({
-      error: "FlareSolverr offline",
-      message: "O servico FlareSolverr nao esta disponivel",
-    });
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FLARESOLVERR_TIMEOUT);
-
-    const flareResponse = await fetch(FLARESOLVERR_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        cmd: 'request.get',
-        url: targetUrl,
-        maxTimeout: FLARESOLVERR_TIMEOUT,
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-
-    const data = await flareResponse.json();
-
-    if (data.status === 'ok' && data.solution) {
-      const solution = data.solution;
-      const responseBody = solution.response || '';
-      const statusCode = solution.status || 200;
-
-      console.log(`[FLARE] Response: ${statusCode} - ${responseBody.length} bytes`);
-
-      res.status(statusCode);
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.end(responseBody);
-    } else {
-      console.error(`[FLARE] Error: ${data.message || 'Unknown error'}`);
-      requestStats.errors++;
-      res.status(500).json({
-        error: "FlareSolverr error",
-        message: data.message || 'Unknown error',
-      });
-    }
-  } catch (error) {
-    console.error(`[FLARE] Exception: ${error.message}`);
-    requestStats.errors++;
-    res.status(500).json({
-      error: "FlareSolverr exception",
-      message: error.message,
-    });
-  }
-});
-
-// ====================================
 // ROTA: /wh-api/* -> sports.williamhill.com
 // Usada pelo crawler para buscar lista de jogos
-// Tenta proxy direto primeiro, fallback para FlareSolverr
 // ====================================
 app.use("/wh-api", createProxyMiddleware({
   target: TARGET_API,
@@ -269,57 +141,12 @@ app.use("/wh-api", createProxyMiddleware({
     const targetPath = req.url.replace('/wh-api', '') || '/';
     console.log(`[API] ${req.method} ${targetPath} -> ${TARGET_API}${targetPath}`);
   },
-  onProxyRes: async (proxyRes, req, res) => {
+  onProxyRes: (proxyRes, req, res) => {
     const contentType = proxyRes.headers["content-type"] || "";
-    const statusCode = proxyRes.statusCode;
 
-    console.log(`[API] Response: ${statusCode} - ${contentType.substring(0, 50)}`);
+    console.log(`[API] Response: ${proxyRes.statusCode} - ${contentType.substring(0, 50)}`);
 
-    // Se for Cloudflare challenge (403 ou 503), tentar FlareSolverr
-    if ((statusCode === 403 || statusCode === 503) && flareSolverrOnline) {
-      console.log('[API] Cloudflare detectado, tentando FlareSolverr...');
-
-      try {
-        const targetPath = req.url.replace('/wh-api', '') || '/';
-        const targetUrl = TARGET_API + targetPath;
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), FLARESOLVERR_TIMEOUT);
-
-        const flareResponse = await fetch(FLARESOLVERR_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            cmd: 'request.get',
-            url: targetUrl,
-            maxTimeout: FLARESOLVERR_TIMEOUT,
-          }),
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeout);
-
-        const data = await flareResponse.json();
-
-        if (data.status === 'ok' && data.solution) {
-          const solution = data.solution;
-          const responseBody = solution.response || '';
-          const flareStatus = solution.status || 200;
-
-          console.log(`[API->FLARE] Fallback sucesso: ${flareStatus}`);
-
-          res.status(flareStatus);
-          res.setHeader("Content-Type", "text/html; charset=utf-8");
-          res.setHeader("Access-Control-Allow-Origin", "*");
-          res.end(responseBody);
-          return;
-        }
-      } catch (flareError) {
-        console.error(`[API->FLARE] Fallback falhou: ${flareError.message}`);
-      }
-    }
-
-    // Resposta normal do proxy
+    // Copiar headers (exceto os problemáticos)
     Object.keys(proxyRes.headers).forEach(key => {
       if (!['content-encoding', 'transfer-encoding', 'content-length', 'content-security-policy'].includes(key)) {
         res.setHeader(key, proxyRes.headers[key]);
@@ -458,20 +285,17 @@ wss.on("connection", (clientWs, req) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`
-╔════════════════════════════════════════════════════════════╗
-║     VPS Proxy - Radar Futebol (com FlareSolverr)           ║
-╠════════════════════════════════════════════════════════════╣
-║  Port: ${PORT}                                                 ║
-║                                                            ║
-║  Routes:                                                   ║
-║  - /health      -> Health check (inclui status FlareSolverr)║
-║  - /stats       -> Statistics                              ║
-║  - /flare/*     -> FlareSolverr bypass (Cloudflare)        ║
-║  - /wh-api/*    -> sports.williamhill.com (auto-fallback)  ║
-║  - /diffusion   -> WebSocket proxy                         ║
-║  - /*           -> sports.whcdn.net (CDN)                  ║
-║                                                            ║
-║  FlareSolverr: ${FLARESOLVERR_URL.padEnd(36)}   ║
-╚════════════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════╗
+║     VPS Proxy - Radar Futebol (Improved)           ║
+╠════════════════════════════════════════════════════╣
+║  Port: ${PORT}                                         ║
+║                                                    ║
+║  Routes:                                           ║
+║  - /health     -> Health check                     ║
+║  - /stats      -> Statistics                       ║
+║  - /wh-api/*   -> sports.williamhill.com           ║
+║  - /diffusion  -> WebSocket proxy                  ║
+║  - /*          -> sports.whcdn.net (CDN)           ║
+╚════════════════════════════════════════════════════╝
   `);
 });
