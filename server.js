@@ -108,26 +108,136 @@ function replaceUrls(content, host) {
   return result;
 }
 
-// Script injetado no HTML para detectar eventos e notificar janela pai
-// DESABILITADO TEMPORARIAMENTE - som controlado apenas pelo Livewire
-// O iframe do William Hill não tem API confiável para detectar eventos
+// Script injetado no scoreboard para detectar incidentes e notificar o Radar (janela pai)
+// Usa MutationObserver no #box_commentaries para detectar novos lances
+// Os icones do WH usam os mesmos nomes do nosso sistema:
+// goal, corner, homedanger, awaydanger, redcard, penalty, shotontarget, etc.
 const SOUND_NOTIFICATION_SCRIPT = `
 <script>
-// Som desabilitado no iframe - usar versao nao-original para sons
+(function() {
+    var incidentesNotificados = {};
+    var DEBOUNCE_MS = 10000;
+    var inicializado = false;
+
+    // Aguarda 8s para ignorar incidentes iniciais (estado do jogo carregado)
+    setTimeout(function() { inicializado = true; }, 8000);
+
+    // Mapa de tipo WH (incident.type) para nosso tipo de som
+    var mapaSom = {
+        'GOAL': 'goal',
+        'CORNER': 'corner',
+        'DANGER': 'dangerattack',
+        'DANGEROUS_ATTACK': 'dangerattack',
+        'PENALTY': 'penalty',
+        'RED_CARD': 'redcard'
+    };
+
+    function notificarEvento(tipoWH) {
+        if (!inicializado) return;
+        var tipoSom = mapaSom[tipoWH];
+        if (!tipoSom) return;
+        var agora = Date.now();
+        var chave = tipoSom;
+        if (incidentesNotificados[chave] && (agora - incidentesNotificados[chave]) < DEBOUNCE_MS) return;
+        incidentesNotificados[chave] = agora;
+        try {
+            window.parent.postMessage({ tipo: 'eventoWH', evento: tipoSom }, '*');
+        } catch(e) {}
+    }
+
+    // Observa #box_commentaries para novos lances inseridos pelo scoreboard
+    function observarComentarios() {
+        var container = document.getElementById('box_commentaries');
+        if (!container) {
+            setTimeout(observarComentarios, 1000);
+            return;
+        }
+
+        // Guarda quantidade inicial de comentarios
+        var ultimaQtd = container.children.length;
+
+        var observer = new MutationObserver(function() {
+            var qtdAtual = container.children.length;
+            // Quando innerHTML muda, children resetam - detecta por conteudo novo
+            if (!container.firstElementChild) return;
+
+            // O primeiro filho e o comentario mais recente (reversed)
+            var primeiro = container.firstElementChild;
+            if (!primeiro) return;
+
+            // Busca o icone do lance - classe CSS do tipo: ._goal, ._corner, ._homedanger, etc.
+            var icone = primeiro.querySelector('[class*="_"]');
+            if (!icone) return;
+
+            var classes = icone.className || '';
+            var match = classes.match(/_([a-z]+)/);
+            if (!match) return;
+
+            var tipoIcone = match[1]; // ex: goal, corner, homedanger, redcard
+
+            // Mapeia icone CSS para tipo de incidente WH
+            var mapaIconeParaTipo = {
+                'goal': 'GOAL',
+                'corner': 'CORNER',
+                'homedanger': 'DANGER',
+                'awaydanger': 'DANGER',
+                'penalty': 'PENALTY',
+                'redcard': 'RED_CARD',
+                'dangerousfreekick': 'CORNER'
+            };
+
+            var tipoWH = mapaIconeParaTipo[tipoIcone];
+            if (tipoWH) {
+                notificarEvento(tipoWH);
+            }
+        });
+
+        observer.observe(container, { childList: true, subtree: true, characterData: true });
+    }
+
+    // Tambem observa mudanca no placar para detectar gols com certeza
+    function observarPlacar() {
+        var placar = document.querySelector('[data-push="score"]');
+        if (!placar) {
+            setTimeout(observarPlacar, 1000);
+            return;
+        }
+
+        var placarAnterior = placar.textContent.trim();
+
+        var observer = new MutationObserver(function() {
+            var placarAtual = placar.textContent.trim();
+            if (placarAtual !== placarAnterior && placarAnterior !== '') {
+                placarAnterior = placarAtual;
+                notificarEvento('GOAL');
+            }
+        });
+
+        observer.observe(placar, { childList: true, subtree: true, characterData: true });
+    }
+
+    // Inicia observadores quando DOM estiver pronto
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+            observarComentarios();
+            observarPlacar();
+        });
+    } else {
+        observarComentarios();
+        observarPlacar();
+    }
+})();
 </script>
 `;
 
-// Injeta script de notificacao de som no HTML
+// Injeta script antes do </body> (apos DOM estar construido)
 function injectSoundScript(content) {
-  // Injeta antes do </body>
   if (content.includes('</body>')) {
     return content.replace('</body>', SOUND_NOTIFICATION_SCRIPT + '</body>');
   }
-  // Ou antes do </html>
   if (content.includes('</html>')) {
     return content.replace('</html>', SOUND_NOTIFICATION_SCRIPT + '</html>');
   }
-  // Ou no final
   return content + SOUND_NOTIFICATION_SCRIPT;
 }
 
