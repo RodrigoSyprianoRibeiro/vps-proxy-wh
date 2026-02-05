@@ -345,7 +345,7 @@ app.use("/", createProxyMiddleware({
     const host = req.headers.host || "radarfutebol.xyz";
 
     Object.keys(proxyRes.headers).forEach(key => {
-      if (!['content-encoding', 'transfer-encoding', 'content-length'].includes(key)) {
+      if (!['content-encoding', 'transfer-encoding', 'content-length', 'content-security-policy', 'content-security-policy-report-only'].includes(key)) {
         res.setHeader(key, proxyRes.headers[key]);
       }
     });
