@@ -109,122 +109,126 @@ function replaceUrls(content, host) {
 }
 
 // Script injetado no scoreboard para detectar incidentes e notificar o Radar (janela pai)
-// Usa MutationObserver no #box_commentaries para detectar novos lances
-// Os icones do WH usam os mesmos nomes do nosso sistema:
-// goal, corner, homedanger, awaydanger, redcard, penalty, shotontarget, etc.
+// Abordagem: observa mudancas no placar (gols) e nas estatisticas (corners, ataques, etc.)
+// O #box_commentaries so e populado quando a aba Commentary esta ativa, entao usamos stats
 const SOUND_NOTIFICATION_SCRIPT = `
 <script>
 (function() {
+    var inicializado = false;
     var incidentesNotificados = {};
     var DEBOUNCE_MS = 10000;
-    var inicializado = false;
+    var statsAnteriores = {};
 
-    // Aguarda 8s para ignorar incidentes iniciais (estado do jogo carregado)
-    setTimeout(function() { inicializado = true; }, 8000);
+    // Aguarda 10s para ignorar estado inicial do jogo (dados carregados via WebSocket)
+    setTimeout(function() { inicializado = true; }, 10000);
 
-    // Mapa de tipo WH (incident.type) para nosso tipo de som
-    var mapaSom = {
-        'GOAL': 'goal',
-        'CORNER': 'corner',
-        'DANGER': 'dangerattack',
-        'DANGEROUS_ATTACK': 'dangerattack',
-        'PENALTY': 'penalty',
-        'RED_CARD': 'redcard'
-    };
-
-    function notificarEvento(tipoWH) {
+    function notificar(tipoSom) {
         if (!inicializado) return;
-        var tipoSom = mapaSom[tipoWH];
-        if (!tipoSom) return;
         var agora = Date.now();
-        var chave = tipoSom;
-        if (incidentesNotificados[chave] && (agora - incidentesNotificados[chave]) < DEBOUNCE_MS) return;
-        incidentesNotificados[chave] = agora;
+        if (incidentesNotificados[tipoSom] && (agora - incidentesNotificados[tipoSom]) < DEBOUNCE_MS) return;
+        incidentesNotificados[tipoSom] = agora;
         try {
             window.parent.postMessage({ tipo: 'eventoWH', evento: tipoSom }, '*');
         } catch(e) {}
     }
 
-    // Observa #box_commentaries para novos lances inseridos pelo scoreboard
-    function observarComentarios() {
-        var container = document.getElementById('box_commentaries');
-        if (!container) {
-            setTimeout(observarComentarios, 1000);
-            return;
-        }
-
-        // Guarda quantidade inicial de comentarios
-        var ultimaQtd = container.children.length;
-
-        var observer = new MutationObserver(function() {
-            var qtdAtual = container.children.length;
-            // Quando innerHTML muda, children resetam - detecta por conteudo novo
-            if (!container.firstElementChild) return;
-
-            // O primeiro filho e o comentario mais recente (reversed)
-            var primeiro = container.firstElementChild;
-            if (!primeiro) return;
-
-            // Busca o icone do lance - classe CSS do tipo: ._goal, ._corner, ._homedanger, etc.
-            var icone = primeiro.querySelector('[class*="_"]');
-            if (!icone) return;
-
-            var classes = icone.className || '';
-            var match = classes.match(/_([a-z]+)/);
-            if (!match) return;
-
-            var tipoIcone = match[1]; // ex: goal, corner, homedanger, redcard
-
-            // Mapeia icone CSS para tipo de incidente WH
-            var mapaIconeParaTipo = {
-                'goal': 'GOAL',
-                'corner': 'CORNER',
-                'homedanger': 'DANGER',
-                'awaydanger': 'DANGER',
-                'penalty': 'PENALTY',
-                'redcard': 'RED_CARD',
-                'dangerousfreekick': 'CORNER'
-            };
-
-            var tipoWH = mapaIconeParaTipo[tipoIcone];
-            if (tipoWH) {
-                notificarEvento(tipoWH);
-            }
-        });
-
-        observer.observe(container, { childList: true, subtree: true, characterData: true });
-    }
-
-    // Tambem observa mudanca no placar para detectar gols com certeza
+    // Observa mudanca no placar para detectar gols
     function observarPlacar() {
         var placar = document.querySelector('[data-push="score"]');
-        if (!placar) {
-            setTimeout(observarPlacar, 1000);
-            return;
-        }
-
-        var placarAnterior = placar.textContent.trim();
-
-        var observer = new MutationObserver(function() {
-            var placarAtual = placar.textContent.trim();
-            if (placarAtual !== placarAnterior && placarAnterior !== '') {
-                placarAnterior = placarAtual;
-                notificarEvento('GOAL');
+        if (!placar) { setTimeout(observarPlacar, 2000); return; }
+        var valorAnterior = placar.textContent.trim();
+        new MutationObserver(function() {
+            var valorAtual = placar.textContent.trim();
+            if (valorAtual !== valorAnterior && valorAnterior !== '') {
+                valorAnterior = valorAtual;
+                notificar('goal');
             }
-        });
-
-        observer.observe(placar, { childList: true, subtree: true, characterData: true });
+        }).observe(placar, { childList: true, subtree: true, characterData: true });
     }
 
-    // Inicia observadores quando DOM estiver pronto
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            observarComentarios();
-            observarPlacar();
-        });
-    } else {
-        observarComentarios();
+    // Le o valor total (casa + fora) de uma estatistica
+    function lerStat(nomeStat) {
+        var el = document.querySelector('[data-stat="' + nomeStat + '"]');
+        if (!el) return -1;
+        var home = el.querySelector('.home');
+        var away = el.querySelector('.away');
+        if (!home || !away) return -1;
+        return (parseInt(home.textContent) || 0) + (parseInt(away.textContent) || 0);
+    }
+
+    // Verifica mudancas nas estatisticas a cada 3 segundos
+    // Mais confiavel que MutationObserver para dados de WebSocket
+    function verificarStats() {
+        var mapa = {
+            'corners': 'corner',
+            'dangerousAttacks': 'dangerattack',
+            'penalties': 'penalty'
+        };
+
+        for (var stat in mapa) {
+            var valor = lerStat(stat);
+            if (valor < 0) continue;
+            if (statsAnteriores[stat] !== undefined && valor > statsAnteriores[stat]) {
+                notificar(mapa[stat]);
+            }
+            statsAnteriores[stat] = valor;
+        }
+    }
+
+    // Observa timeline de cartoes para detectar cartoes vermelhos
+    function observarCartoes() {
+        var timelineCards = document.querySelector('.timeline__cards');
+        if (!timelineCards) { setTimeout(observarCartoes, 2000); return; }
+        var htmlAnterior = timelineCards.innerHTML;
+        new MutationObserver(function() {
+            var htmlAtual = timelineCards.innerHTML;
+            if (htmlAtual !== htmlAnterior) {
+                // Verifica se apareceu cartao vermelho (icone _redcard no HTML novo)
+                if (htmlAtual.indexOf('_redcard') > -1 && htmlAnterior.indexOf('_redcard') === -1) {
+                    notificar('redcard');
+                } else {
+                    // Compara quantidade de _redcard
+                    var antes = (htmlAnterior.match(/_redcard/g) || []).length;
+                    var agora = (htmlAtual.match(/_redcard/g) || []).length;
+                    if (agora > antes) notificar('redcard');
+                }
+                htmlAnterior = htmlAtual;
+            }
+        }).observe(timelineCards, { childList: true, subtree: true });
+    }
+
+    // Observa commentaries como backup (funciona quando aba esta ativa)
+    function observarComentarios() {
+        var container = document.getElementById('box_commentaries');
+        if (!container) { setTimeout(observarComentarios, 3000); return; }
+        new MutationObserver(function() {
+            if (!container.firstElementChild) return;
+            var icone = container.firstElementChild.querySelector('[class*="_"]');
+            if (!icone) return;
+            var match = (icone.className || '').match(/_([a-z]+)/);
+            if (!match) return;
+            var mapa = {
+                'goal': 'goal', 'corner': 'corner',
+                'homedanger': 'dangerattack', 'awaydanger': 'dangerattack',
+                'penalty': 'penalty', 'redcard': 'redcard'
+            };
+            if (mapa[match[1]]) notificar(mapa[match[1]]);
+        }).observe(container, { childList: true, subtree: true });
+    }
+
+    function iniciar() {
         observarPlacar();
+        observarCartoes();
+        observarComentarios();
+        // Polling de stats a cada 3s (mais confiavel que MutationObserver para WebSocket data)
+        setInterval(verificarStats, 3000);
+        verificarStats();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', iniciar);
+    } else {
+        iniciar();
     }
 })();
 </script>
