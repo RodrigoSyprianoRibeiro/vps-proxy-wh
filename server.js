@@ -419,10 +419,18 @@ wss.on("connection", (clientWs, req) => {
   targetWs.on("open", () => console.log("[WS] Connected"));
   targetWs.on("message", d => clientWs.readyState === 1 && clientWs.send(d));
   clientWs.on("message", d => targetWs.readyState === 1 && targetWs.send(d));
-  targetWs.on("close", (c, r) => { try { clientWs.close(c, r); } catch(e){} });
-  clientWs.on("close", (c, r) => { try { targetWs.close(c, r); } catch(e){} });
-  targetWs.on("error", (e) => { console.error("[WS ERROR]", e.message); try { clientWs.close(); } catch(e){} });
-  clientWs.on("error", () => { try { targetWs.close(); } catch(e){} });
+  targetWs.on("close", (c, r) => { try { if (clientWs.readyState <= 1) clientWs.close(c, r); } catch(e){} });
+  clientWs.on("close", (c, r) => { try { if (targetWs.readyState <= 1) targetWs.close(c, r); } catch(e){} });
+  targetWs.on("error", (e) => {
+    // Ignora erro esperado de race condition (cliente desconecta antes do WH responder)
+    if (!e.message || !e.message.includes("before the connection was established")) {
+      console.error("[WS ERROR]", e.message);
+    }
+    try { if (clientWs.readyState <= 1) clientWs.close(); } catch(e){}
+  });
+  clientWs.on("error", (e) => {
+    try { if (targetWs.readyState <= 1) targetWs.close(); } catch(e){}
+  });
 });
 
 server.listen(PORT, "0.0.0.0", () => {
