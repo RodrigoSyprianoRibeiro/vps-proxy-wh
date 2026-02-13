@@ -454,6 +454,87 @@ async function handleGetOddsBatch(req, res) {
     }
 }
 
+// Cache de eventos do dia
+const eventsCache = { data: null, expiry: 0 };
+const EVENTS_CACHE_TTL = 30 * 60 * 1000; // 30 minutos
+
+/**
+ * Busca todos os eventos de futebol do dia/proximo dia na Betfair
+ * Retorna array de { id, name, homeName, awayName, competitionName, startTime, countryCode }
+ */
+async function listSoccerEvents(horasAdiante = 24) {
+    const agora = Date.now();
+    if (eventsCache.data && agora < eventsCache.expiry) {
+        return eventsCache.data;
+    }
+
+    const from = new Date();
+    const to = new Date(agora + horasAdiante * 60 * 60 * 1000);
+
+    const result = await betfairApiCall('listEvents', {
+        filter: {
+            eventTypeIds: ['1'], // Futebol
+            marketStartTime: {
+                from: from.toISOString(),
+                to: to.toISOString(),
+            },
+        },
+    });
+
+    const eventos = (result || []).map(item => {
+        const ev = item.event || {};
+        const nome = ev.name || '';
+
+        // Parsear "Team A v Team B" ou "Team A vs Team B"
+        let homeName = '';
+        let awayName = '';
+        const separadores = [' v ', ' vs '];
+        for (const sep of separadores) {
+            const idx = nome.indexOf(sep);
+            if (idx > -1) {
+                homeName = nome.substring(0, idx).trim();
+                awayName = nome.substring(idx + sep.length).trim();
+                break;
+            }
+        }
+
+        return {
+            id: ev.id,
+            name: nome,
+            homeName,
+            awayName,
+            countryCode: ev.countryCode || '',
+            startTime: ev.openDate || '',
+            marketCount: item.marketCount || 0,
+        };
+    }).filter(e => e.homeName && e.awayName); // Filtrar apenas jogos com 2 times
+
+    eventsCache.data = eventos;
+    eventsCache.expiry = agora + EVENTS_CACHE_TTL;
+
+    console.log(`[BETFAIR] listEvents: ${eventos.length} jogos de futebol`);
+    return eventos;
+}
+
+/**
+ * Handler: GET /betfair-api/events?horas=24
+ * Lista todos os eventos de futebol proximos
+ */
+async function handleListEvents(req, res) {
+    try {
+        const horas = parseInt(req.query.horas) || 24;
+        const eventos = await listSoccerEvents(Math.min(horas, 48));
+
+        res.json({
+            total: eventos.length,
+            eventos,
+        });
+    } catch (e) {
+        console.error('[BETFAIR] Erro listEvents:', e.message);
+        res.status(500).json({ error: e.message });
+    }
+}
+
 /**
  * Handler: GET /betfair-api/status
  * Status da conexao com Betfair
@@ -496,5 +577,6 @@ setInterval(() => {
 module.exports = {
     getOdds: handleGetOdds,
     getOddsBatch: handleGetOddsBatch,
+    listEvents: handleListEvents,
     getStatus: handleStatus,
 };

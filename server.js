@@ -414,6 +414,7 @@ app.use("/matchbook-api", createProxyMiddleware({
 // Autenticacao via certificado SSL + busca de odds
 // ====================================
 app.get("/betfair-api/status", betfairApi.getStatus);
+app.get("/betfair-api/events", betfairApi.listEvents);
 app.get("/betfair-api/odds-batch", betfairApi.getOddsBatch);
 app.get("/betfair-api/odds/:eventId", betfairApi.getOdds);
 
