@@ -1,7 +1,10 @@
+require('dotenv').config();
+
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 const { WebSocketServer, WebSocket } = require("ws");
 const http = require("http");
+const betfairApi = require("./betfair-api");
 
 const app = express();
 const PORT = 3000;
@@ -88,6 +91,7 @@ const requestStats = {
   cdn: 0,
   api: 0,
   matchbook: 0,
+  betfair: 0,
   ws: 0,
   errors: 0,
 };
@@ -406,6 +410,14 @@ app.use("/matchbook-api", createProxyMiddleware({
 }));
 
 // ====================================
+// ROTA: /betfair-api/* -> Betfair Exchange API
+// Autenticacao via certificado SSL + busca de odds
+// ====================================
+app.get("/betfair-api/status", betfairApi.getStatus);
+app.get("/betfair-api/odds-batch", betfairApi.getOddsBatch);
+app.get("/betfair-api/odds/:eventId", betfairApi.getOdds);
+
+// ====================================
 // ROTA: /* -> sports.whcdn.net (CDN)
 // Usada para scoreboard/radar
 // ====================================
@@ -521,6 +533,7 @@ server.listen(PORT, "0.0.0.0", () => {
 ║  - /stats          -> Statistics                   ║
 ║  - /wh-api/*       -> sports.williamhill.com       ║
 ║  - /matchbook-api/* -> api.matchbook.com           ║
+║  - /betfair-api/*  -> Betfair Exchange API         ║
 ║  - /diffusion      -> WebSocket proxy              ║
 ║  - /*              -> sports.whcdn.net (CDN)       ║
 ╚════════════════════════════════════════════════════╝
