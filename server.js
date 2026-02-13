@@ -87,6 +87,7 @@ app.get("/stats", (req, res) => {
 const requestStats = {
   cdn: 0,
   api: 0,
+  matchbook: 0,
   ws: 0,
   errors: 0,
 };
@@ -330,6 +331,81 @@ app.use("/wh-api", createProxyMiddleware({
 }));
 
 // ====================================
+// ROTA: /matchbook-api/* -> api.matchbook.com
+// Usada pelo Laravel para buscar eventos Matchbook
+// ====================================
+app.use("/matchbook-api", createProxyMiddleware({
+  target: "https://api.matchbook.com",
+  changeOrigin: true,
+  selfHandleResponse: true,
+  proxyTimeout: PROXY_TIMEOUT,
+  timeout: PROXY_TIMEOUT,
+  followRedirects: false,
+  pathRewrite: {
+    "^/matchbook-api": "",
+  },
+  onProxyReq: (proxyReq, req) => {
+    requestStats.matchbook++;
+
+    proxyReq.removeHeader('x-forwarded-for');
+    proxyReq.removeHeader('x-forwarded-host');
+    proxyReq.removeHeader('x-forwarded-proto');
+    proxyReq.removeHeader('x-real-ip');
+    proxyReq.removeHeader('via');
+
+    proxyReq.setHeader('Host', 'api.matchbook.com');
+    proxyReq.setHeader('Accept', 'application/json');
+    proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+    const targetPath = req.url.replace('/matchbook-api', '') || '/';
+    console.log(`[MATCHBOOK] ${req.method} ${targetPath} -> https://api.matchbook.com${targetPath}`);
+  },
+  onProxyRes: (proxyRes, req, res) => {
+    const contentType = proxyRes.headers["content-type"] || "";
+
+    console.log(`[MATCHBOOK] Response: ${proxyRes.statusCode} - ${contentType.substring(0, 50)}`);
+
+    Object.keys(proxyRes.headers).forEach(key => {
+      if (!['content-encoding', 'transfer-encoding', 'content-length', 'content-security-policy'].includes(key)) {
+        res.setHeader(key, proxyRes.headers[key]);
+      }
+    });
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    const chunks = [];
+    proxyRes.on("data", chunk => chunks.push(chunk));
+    proxyRes.on("end", () => {
+      try {
+        let body = Buffer.concat(chunks).toString("utf8");
+        res.status(proxyRes.statusCode);
+        res.setHeader("Content-Length", Buffer.byteLength(body));
+        res.end(body);
+      } catch (e) {
+        console.error(`[MATCHBOOK PARSE ERROR] ${e.message}`);
+        requestStats.errors++;
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Parse error", message: e.message });
+        }
+      }
+    });
+    proxyRes.on("error", (e) => {
+      console.error(`[MATCHBOOK RESPONSE ERROR] ${e.message}`);
+      requestStats.errors++;
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Response error", message: e.message });
+      }
+    });
+  },
+  onError: (err, req, res) => {
+    console.error(`[MATCHBOOK ERROR] ${err.message}`);
+    requestStats.errors++;
+    if (!res.headersSent) {
+      res.status(502).json({ error: "Proxy error", message: err.message });
+    }
+  },
+}));
+
+// ====================================
 // ROTA: /* -> sports.whcdn.net (CDN)
 // Usada para scoreboard/radar
 // ====================================
@@ -441,11 +517,12 @@ server.listen(PORT, "0.0.0.0", () => {
 ║  Port: ${PORT}                                         ║
 ║                                                    ║
 ║  Routes:                                           ║
-║  - /health     -> Health check                     ║
-║  - /stats      -> Statistics                       ║
-║  - /wh-api/*   -> sports.williamhill.com           ║
-║  - /diffusion  -> WebSocket proxy                  ║
-║  - /*          -> sports.whcdn.net (CDN)           ║
+║  - /health         -> Health check                 ║
+║  - /stats          -> Statistics                   ║
+║  - /wh-api/*       -> sports.williamhill.com       ║
+║  - /matchbook-api/* -> api.matchbook.com           ║
+║  - /diffusion      -> WebSocket proxy              ║
+║  - /*              -> sports.whcdn.net (CDN)       ║
 ╚════════════════════════════════════════════════════╝
   `);
 });
