@@ -456,30 +456,38 @@ async function handleGetOddsBatch(req, res) {
 
 // Cache de eventos do dia
 const eventsCache = { data: null, expiry: 0 };
+const eventsCacheLive = { data: null, expiry: 0 };
 const EVENTS_CACHE_TTL = 30 * 60 * 1000; // 30 minutos
+const EVENTS_CACHE_LIVE_TTL = 5 * 60 * 1000; // 5 minutos
 
 /**
  * Busca todos os eventos de futebol do dia/proximo dia na Betfair
  * Retorna array de { id, name, homeName, awayName, competitionName, startTime, countryCode }
+ * @param {number} horasAdiante - Horas a frente (ignorado se live=true)
+ * @param {boolean} live - Se true, busca apenas jogos ao vivo (inPlayOnly)
  */
-async function listSoccerEvents(horasAdiante = 24) {
+async function listSoccerEvents(horasAdiante = 24, live = false) {
     const agora = Date.now();
-    if (eventsCache.data && agora < eventsCache.expiry) {
-        return eventsCache.data;
+    const cache = live ? eventsCacheLive : eventsCache;
+
+    if (cache.data && agora < cache.expiry) {
+        return cache.data;
     }
 
-    const from = new Date();
-    const to = new Date(agora + horasAdiante * 60 * 60 * 1000);
+    const filter = { eventTypeIds: ['1'] }; // Futebol
 
-    const result = await betfairApiCall('listEvents', {
-        filter: {
-            eventTypeIds: ['1'], // Futebol
-            marketStartTime: {
-                from: from.toISOString(),
-                to: to.toISOString(),
-            },
-        },
-    });
+    if (live) {
+        filter.inPlayOnly = true;
+    } else {
+        const from = new Date();
+        const to = new Date(agora + horasAdiante * 60 * 60 * 1000);
+        filter.marketStartTime = {
+            from: from.toISOString(),
+            to: to.toISOString(),
+        };
+    }
+
+    const result = await betfairApiCall('listEvents', { filter });
 
     const eventos = (result || []).map(item => {
         const ev = item.event || {};
@@ -509,21 +517,23 @@ async function listSoccerEvents(horasAdiante = 24) {
         };
     }).filter(e => e.homeName && e.awayName); // Filtrar apenas jogos com 2 times
 
-    eventsCache.data = eventos;
-    eventsCache.expiry = agora + EVENTS_CACHE_TTL;
+    const ttl = live ? EVENTS_CACHE_LIVE_TTL : EVENTS_CACHE_TTL;
+    cache.data = eventos;
+    cache.expiry = agora + ttl;
 
-    console.log(`[BETFAIR] listEvents: ${eventos.length} jogos de futebol`);
+    console.log(`[BETFAIR] listEvents${live ? ' (LIVE)' : ''}: ${eventos.length} jogos de futebol`);
     return eventos;
 }
 
 /**
- * Handler: GET /betfair-api/events?horas=24
- * Lista todos os eventos de futebol proximos
+ * Handler: GET /betfair-api/events?horas=24&live=true
+ * Lista todos os eventos de futebol proximos ou ao vivo
  */
 async function handleListEvents(req, res) {
     try {
+        const live = req.query.live === 'true';
         const horas = parseInt(req.query.horas) || 24;
-        const eventos = await listSoccerEvents(Math.min(horas, 48));
+        const eventos = await listSoccerEvents(Math.min(horas, 48), live);
 
         res.json({
             total: eventos.length,
