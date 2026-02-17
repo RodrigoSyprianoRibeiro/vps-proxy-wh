@@ -123,6 +123,7 @@ const SOUND_NOTIFICATION_SCRIPT = `
     var incidentesNotificados = {};
     var DEBOUNCE_MS = 10000;
     var statsAnteriores = {};
+    var placarAnterior = '';
 
     // Aguarda 10s para ignorar estado inicial do jogo (dados carregados via WebSocket)
     setTimeout(function() { inicializado = true; }, 10000);
@@ -137,17 +138,23 @@ const SOUND_NOTIFICATION_SCRIPT = `
         } catch(e) {}
     }
 
-    // Observa mudanca no placar para detectar gols
+    // Verifica mudanca no placar para detectar gols
+    // Usa polling + MutationObserver para maxima confiabilidade
+    function verificarPlacar() {
+        var placar = document.querySelector('[data-push="score"]');
+        if (!placar) return;
+        var valorAtual = placar.textContent.trim();
+        if (valorAtual && placarAnterior && valorAtual !== placarAnterior) {
+            notificar('goal');
+        }
+        if (valorAtual) placarAnterior = valorAtual;
+    }
+
     function observarPlacar() {
         var placar = document.querySelector('[data-push="score"]');
         if (!placar) { setTimeout(observarPlacar, 2000); return; }
-        var valorAnterior = placar.textContent.trim();
         new MutationObserver(function() {
-            var valorAtual = placar.textContent.trim();
-            if (valorAtual !== valorAnterior && valorAnterior !== '') {
-                valorAnterior = valorAtual;
-                notificar('goal');
-            }
+            verificarPlacar();
         }).observe(placar, { childList: true, subtree: true, characterData: true });
     }
 
@@ -225,8 +232,9 @@ const SOUND_NOTIFICATION_SCRIPT = `
         observarPlacar();
         observarCartoes();
         observarComentarios();
-        // Polling de stats a cada 3s (mais confiavel que MutationObserver para WebSocket data)
-        setInterval(verificarStats, 3000);
+        // Polling a cada 3s (mais confiavel que MutationObserver para WebSocket data)
+        setInterval(function() { verificarPlacar(); verificarStats(); }, 3000);
+        verificarPlacar();
         verificarStats();
     }
 
