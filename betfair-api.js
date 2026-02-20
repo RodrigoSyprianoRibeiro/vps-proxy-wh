@@ -489,6 +489,26 @@ async function listSoccerEvents(horasAdiante = 24, live = false) {
 
     const result = await betfairApiCall('listEvents', { filter });
 
+    // Detectar sessao zumbi: API retorna 0 eventos sem erro (sessao invalida silenciosamente)
+    // Forcar re-login e tentar novamente uma vez
+    if ((!result || result.length === 0) && !live && sessionToken) {
+        console.log('[BETFAIR] listEvents retornou 0 eventos - forcando re-login...');
+        sessionToken = null;
+        sessionExpiry = 0;
+        const retryResult = await betfairApiCall('listEvents', { filter });
+        if (retryResult && retryResult.length > 0) {
+            console.log(`[BETFAIR] Re-login resolveu: ${retryResult.length} eventos brutos`);
+            return parseEventos(retryResult, live);
+        }
+    }
+
+    return parseEventos(result, live);
+}
+
+function parseEventos(result, live) {
+    const agora = Date.now();
+    const cache = live ? eventsCacheLive : eventsCache;
+
     const eventos = (result || []).map(item => {
         const ev = item.event || {};
         const nome = ev.name || '';
