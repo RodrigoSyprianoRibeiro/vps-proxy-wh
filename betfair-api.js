@@ -546,13 +546,26 @@ function parseEventos(result, live) {
 }
 
 /**
- * Handler: GET /betfair-api/events?horas=24&live=true
+ * Handler: GET /betfair-api/events?horas=24&live=true&fresh=true
  * Lista todos os eventos de futebol proximos ou ao vivo
+ * fresh=true forca nova sessao e limpa cache de eventos
  */
 async function handleListEvents(req, res) {
     try {
         const live = req.query.live === 'true';
         const horas = parseInt(req.query.horas) || 24;
+        const fresh = req.query.fresh === 'true';
+
+        if (fresh) {
+            console.log('[BETFAIR] fresh=true: forcando nova sessao e limpando cache');
+            sessionToken = null;
+            sessionExpiry = 0;
+            eventsCache.data = null;
+            eventsCache.expiry = 0;
+            eventsCacheLive.data = null;
+            eventsCacheLive.expiry = 0;
+        }
+
         const eventos = await listSoccerEvents(Math.min(horas, 48), live);
 
         res.json({
